@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8"?>
+<search> 
+  
+  
+    
+    <entry>
+      <title>JPA自动建表错误-Table doesn&#39;t exist</title>
+      <link href="/2020/01/04/jpa-create-table-error/"/>
+      <url>/2020/01/04/jpa-create-table-error/</url>
+      
+        <content type="html"><![CDATA[<p>这几天在开发一个新项目，项目启动时会抛出一大堆数据库相关的异常。这些异常当中除了生成外键的错误之外，只剩下一个是：<code>Caused by: java.sql.SQLSyntaxErrorException: Table &#39;npc_platform.performance&#39; doesn&#39;t exist</code>。持久层使用Spring Data JPA，自动根据实体类生成数据库表。很显然，这是自动建表时出了问题，没有生成performance表。<a id="more"></a></p><h3 id="两个解决方案"><a href="#两个解决方案" class="headerlink" title="两个解决方案"></a>两个解决方案</h3><p>经过一番百度，总体得出了两个原因及其相应的解决办法。</p><ol><li>MySQL驱动的版本问题</li></ol><p>因为MySQL驱动8以上的版本将参数<code>nullCatalogMeansCurrent</code>的默认值由true改为了false（详见<a href="https://segmentfault.com/a/1190000017264370" target="_blank" rel="noopener">这里</a>），所以建表时会遍历当前数据库连接的所有数据库的表，如果有同名的表存在则不创建当前表，故最后导致表不存在的问题。解决办法有两种：</p><ul><li>降低MySQL数据库驱动的版本</li><li>为数据源的url添加参数<code>nullCatalogMeansCurrent=true</code></li></ul><ol start="2"><li>实体的主键自增长策略问题</li></ol><p>将实体类的主键id的生成策略改成<code>@GeneratedValue(strategy = GenerationType.IDENTITY)</code>。因为MySQL不支持<code>GenerationType.AUTO</code>的生成策略。</p><p>由于我的主键生成策略本来就是正确的，于是我尝试了第一个问题的解决方案，然而，很遗憾，并没有解决我的问题。</p><h3 id="真正的原因"><a href="#真正的原因" class="headerlink" title="真正的原因"></a>真正的原因</h3><p>后来有人提示我将sql语句打印出来看看，于是我在配置中将<code>spring.jpa.show-sql</code>设置为true，重新启动项目。我检查了一下抛出异常时的那一条sql语句，没有发现什么问题，看起来一切正常。然后我将该sql语句复制到Navicat中执行，这时数据库报错了。</p><p>SQL语句：</p><blockquote><p>alter table performance add constraint FKfb1hwmhggn54m4krusff5e0fu foreign key (group) references npc_member_group (id);</p></blockquote><p>错误提示：</p><blockquote><p>1064 - You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near <strong>‘group) references npc_member_group (id)’</strong> at line 1</p></blockquote><p>显然是表performance的’group’字段导致了语法问题，一查之下发现果然如此：<strong>group是mysql的关键字</strong>。在将Performance实体类中的group字段改了以后所有的异常消失的干干净净。</p><p>“命名不规范，调试两行泪”。这次的调试过程也给了我一条很有用的经验：使用JPA自动建表时，如果遇到数据库相关的错误，一定要打印sql语句看一看，或者复制到数据库中实际运行一下，一定有用！</p>]]></content>
+      
+      
+      <categories>
+          
+          <category> 踩坑 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> JPA </tag>
+            
+            <tag> Hibernate </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>Spring Security配置错误导致跨域请求失败</title>
+      <link href="/2019/11/29/cross-origin-failure/"/>
+      <url>/2019/11/29/cross-origin-failure/</url>
+      
+        <content type="html"><![CDATA[<p>前段时间在开发一个前后端分离的项目的时候，遇到了一个问题：已登录的用户带着token请求后端接口时，一直返回401。</p><p>整个项目使用vue + spring boot开发，权限控制使用<a href="https://jwt.io/" target="_blank" rel="noopener">Jwt</a> + spring security实现。我在后端过滤的时候如果发现用户未登录，却要访问需要登录权限的接口时就返回401提示未登录。但是我的这个请求显然是已登录并且带着token访问的。Google一番之后终于搞明白了，一切都是因为对跨域和CORS不熟悉所致的，故在此做一个笔记与总结。<a id="more"></a></p><h3 id="跨域与同源策略"><a href="#跨域与同源策略" class="headerlink" title="跨域与同源策略"></a>跨域与同源策略</h3><blockquote><p>当一个资源从与该资源本身所在的服务器<strong>不同的域、协议或端口</strong>请求一个资源时，资源会发起一个<strong>跨域HTTP请求</strong>。</p></blockquote><p>例如：站点 <a href="http://domain-a.com" target="_blank" rel="noopener">http://domain-a.com</a> 的某HTML页面通过&lt;img&gt;的 src请求 <a href="http://domain-b.com/image.jpg" target="_blank" rel="noopener">http://domain-b.com/image.jpg</a> 。网络上的许多页面都会加载来自不同域的CSS样式表，图像和脚本等资源。</p><p>跨域请求会引发一系列的安全问题（具体的问题在此不做描述）。所以，为了保障安全，浏览器采用了同源策略。</p><blockquote><p>如果两个URL的协议、域名和端口都相同，我们就称这两个URL同源。</p></blockquote><p>同源策略限制了以下行为：</p><ul><li>同源策略限制了来自不同源的 JavaScript 脚本对当前 DOM 对象读和写的操作。</li><li>同源策略限制了不同源的站点读取当前站点的 Cookie、IndexDB、LocalStorage 等数据。</li><li>同源策略限制了通过 XMLHttpRequest 等方式将站点的数据发送给不同源的站点。</li></ul><p>那么如何突破同源策略的限制呢？方法较多，我接触过的有3种：JSONP，CORS，Nginx代理。下面重点来介绍主流的跨域解决方案：CORS。</p><h3 id="CORS"><a href="#CORS" class="headerlink" title="CORS"></a>CORS</h3><p>CORS是一个W3C标准，全称是”跨域资源共享”（cross-origin resource sharing）。它使用额外的 HTTP头来告诉浏览器，让运行在一个origin(domain)上的Web应用被允许访问来自不同源服务器上的指定的资源。</p><p>CORS需要浏览器和服务器同时支持。目前，所有浏览器都支持该功能（IE浏览器不能低于IE 10）。也就是说，现在我们发起<strong>满足CORS条件</strong>的跨域请求时，浏览器会自动使用CORS机制。</p><blockquote><p>CORS允许在下列场景中使用跨域 HTTP 请求：</p><ul><li>由<code>XMLHttpRequest</code>或Fetch发起的跨域HTTP请求。</li><li>Web 字体(CSS 中通过<code>@font-face</code>使用跨域字体资源)，因此，网站就可以发布TrueType字体资源，并只允许已授权网站进行跨站调用。</li><li>WebGL贴图</li><li>使用 <code>drawImage</code> 将Images/video画面绘制到canvas</li></ul></blockquote><p>CORS新增了一组 HTTP 首部字段，允许服务器声明哪些源站通过浏览器有权限访问哪些资源。例如：Access-Control-Allow-Origin（允许哪些源站），Access-Control-Allow-Methods（允许哪些方法），Access-Control-Allow-Headers（允许哪些请求头）等。</p><p><strong>另外，对那些可能对服务器数据产生副作用的HTTP请求方法，浏览器必须首先使用OPTIONS方法发起一个预检请求（preflight request）</strong>，从而获知服务端是否允许该跨域请求。服务器确认允许之后，才发起实际的HTTP请求。</p><h4 id="简单请求"><a href="#简单请求" class="headerlink" title="简单请求"></a>简单请求</h4><p>某些请求不会触发CORS 预检请求，我们称这样的请求为“简单请求”。若请求满足所有下述条件，则该请求可视为“简单请求”：</p><ol><li>使用下列方法之一：GET，HEAD，POST</li><li>不得人为设置下列集合之外的其他首部字段：<ul><li>Accept</li><li>Accept-Language</li><li>Content-Language</li><li>Content-Type（需要注意额外的限制）</li><li>DPR</li><li>Downlink</li><li>Save-Data</li><li>Viewport-Width</li><li>Width</li></ul></li><li>Content-Type的值仅限于下列三者之一：<ul><li>text/plain</li><li>multipart/form-data</li><li>application/x-www-form-urlencoded</li></ul></li><li>请求中的任意XMLHttpRequestUpload对象均没有注册任何事件监听器。XMLHttpRequestUpload对象可以使用XMLHttpRequest.upload属性访问。</li><li>请求中没有使用ReadableStream对象。</li></ol><p>一般来说，我们只用关注前3个条件就好了。</p><h4 id="预检请求"><a href="#预检请求" class="headerlink" title="预检请求"></a>预检请求</h4><p>相对的，对于不满足简单请求条件的跨域请求，浏览器会先使用OPTIONS方法发起一个预检请求（preflight request）到服务器，以获知服务器是否允许该实际请求。如果允许，则再发送实际请求，完成整个请求过程。使用预检请求的好处是，可以避免跨域请求对服务器的用户数据产生未预期的影响。</p><h3 id="问题及解决方案"><a href="#问题及解决方案" class="headerlink" title="问题及解决方案"></a>问题及解决方案</h3><p>我遇到的这个问题的原因就是我在spring security中的配置出错了，没有放行OPTIONS请求。我在本地开发时，前端vue项目和后端启的是两个服务器，占用不同的端口，所以产生了跨域请求。而我的请求由于带了自定义的头部Authentication: token不满足简单请求的条件，所以会发送OPTIONS预检请求，因此会被spring security拦截返回401。</p><p>所以，解决方案就是在spring security的配置中增加以下代码：</p><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">http</span><br><span class="line">... <span class="comment">//其它配置</span></span><br><span class="line">.antMatchers(HttpMethod.OPTIONS, <span class="string">"/**"</span>)</span><br><span class="line">.permitAll()</span><br><span class="line">... <span class="comment">//其它配置</span></span><br></pre></td></tr></table></figure><p>部署到服务器上时，使用Nginx统一代理前后端将不会产生跨域问题，故也不需要此配置。</p><h5 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h5><p><a href="https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Access_control_CORS" target="_blank" rel="noopener">HTTP访问控制（CORS）</a></p><p><a href="https://developer.mozilla.org/zh-CN/docs/Web/Security/Same-origin_policy" target="_blank" rel="noopener">浏览器的同源策略</a></p>]]></content>
+      
+      
+      <categories>
+          
+          <category> 踩坑 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> spring security </tag>
+            
+            <tag> 跨域 </tag>
+            
+            <tag> CORS </tag>
+            
+            <tag> Jwt </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>无法阻止表单提交</title>
+      <link href="/2019/11/27/prevent-form-submission/"/>
+      <url>/2019/11/27/prevent-form-submission/</url>
+      
+        <content type="html"><![CDATA[<p>最近在写一个登录页面的时候，在提交表单事件的处理函数中先判断必填字段是否完整，不完整则提示用户并且不发送登录请求。然而，结果却是当用户输入不完整时，提示之后依旧会提交，并且提交的表单信息自动追加在当前地址栏的url之后。<a id="more"></a></p><p>在我百度“无法阻止表单提交”之后，经过一番研究终于搞懂了原因。都是对前端基础知识不熟导致的，故在此做一下总结。</p><h2 id="原生表单提交"><a href="#原生表单提交" class="headerlink" title="原生表单提交"></a>原生表单提交</h2><p>为了演示，写了一个模拟登录的demo。</p><p>后端代码如下，当使用arya，123456登录时才会成功。</p><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">@PostMapping</span>(<span class="string">"/login"</span>)</span><br><span class="line"><span class="keyword">public</span> <span class="meta">@ResponseBody</span> <span class="function">String <span class="title">login</span><span class="params">(String username, String password)</span> </span>&#123;</span><br><span class="line">    <span class="keyword">if</span> (<span class="string">"arya"</span>.equals(username)) &#123;</span><br><span class="line">        <span class="keyword">if</span> (<span class="string">"123456"</span>.equals(password)) &#123;</span><br><span class="line">            <span class="keyword">return</span> <span class="string">"login success"</span>;</span><br><span class="line">        &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">            <span class="keyword">return</span> <span class="string">"password error"</span>;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125; <span class="keyword">else</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> <span class="string">"username invalid"</span>;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure><p>前端使用原生的写法，没有引入任何框架或组件。</p><p>登录表单如下：</p><figure class="highlight html"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">form</span> <span class="attr">action</span>=<span class="string">"/login"</span> <span class="attr">method</span>=<span class="string">"post"</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">div</span>&gt;</span></span><br><span class="line">        <span class="tag">&lt;<span class="name">label</span>&gt;</span>username<span class="tag">&lt;/<span class="name">label</span>&gt;</span></span><br><span class="line">        <span class="tag">&lt;<span class="name">input</span> <span class="attr">type</span>=<span class="string">"text"</span> <span class="attr">name</span>=<span class="string">"username"</span> <span class="attr">id</span>=<span class="string">"username"</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;/<span class="name">div</span>&gt;</span></span><br><span class="line"></span><br><span class="line">    <span class="tag">&lt;<span class="name">div</span>&gt;</span></span><br><span class="line">        <span class="tag">&lt;<span class="name">label</span>&gt;</span>password<span class="tag">&lt;/<span class="name">label</span>&gt;</span></span><br><span class="line">        <span class="tag">&lt;<span class="name">input</span> <span class="attr">type</span>=<span class="string">"password"</span> <span class="attr">name</span>=<span class="string">"password"</span> <span class="attr">id</span>=<span class="string">"password"</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;/<span class="name">div</span>&gt;</span></span><br><span class="line"></span><br><span class="line">    <span class="tag">&lt;<span class="name">div</span>&gt;</span></span><br><span class="line">        <span class="comment">&lt;!-- 两种登录按钮写法都可以 --&gt;</span></span><br><span class="line">        <span class="comment">&lt;!-- &lt;button type="submit"&gt;提交&lt;/button&gt; --&gt;</span></span><br><span class="line">        <span class="tag">&lt;<span class="name">input</span> <span class="attr">type</span>=<span class="string">"submit"</span>&gt;</span></span><br><span class="line">        <span class="tag">&lt;<span class="name">input</span> <span class="attr">type</span>=<span class="string">"reset"</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;/<span class="name">div</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">form</span>&gt;</span></span><br></pre></td></tr></table></figure><p>这个时候一切工作正常，点击type为submit的按钮，会自动将表单数据以post方式提交到/login。但是有2点需要注意：</p><ul><li>如果form标签不写action和method属性，则会默认以get方式提交到当前地址栏的url。</li><li>button标签的type取值可以为：button，submit，reset，默认为submit。</li></ul><p>而如果我们想在提交表单数据之前对输入域做一个判断，限制不完整的表单进行提交时，可以在form标签中添加一个提交表单事件的处理函数<code>&lt;form action=&quot;/login&quot; method=&quot;post&quot; onSubmit=&quot;login()&quot;&gt;</code>。js代码如下：</p><figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">function</span> <span class="title">login</span>(<span class="params"></span>) </span>&#123;</span><br><span class="line">    <span class="keyword">var</span> username = <span class="built_in">document</span>.getElementById(<span class="string">"username"</span>);</span><br><span class="line">    <span class="keyword">var</span> password = <span class="built_in">document</span>.getElementById(<span class="string">"password"</span>);</span><br><span class="line">            </span><br><span class="line">    <span class="keyword">if</span> (username.value === <span class="literal">null</span> || username.value === <span class="string">''</span>) &#123;</span><br><span class="line">        alert(<span class="string">"username cannot be empty"</span>);</span><br><span class="line">        <span class="keyword">return</span> <span class="literal">false</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (password.value === <span class="literal">null</span> || password.value === <span class="string">''</span>) &#123;</span><br><span class="line">        alert(<span class="string">"password cannot be empty"</span>);</span><br><span class="line">        <span class="keyword">return</span> <span class="literal">false</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">return</span> <span class="literal">true</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure><p>但是这样写会发现虽然有输入域的提示，但是依然会提交请求，这是没有阻止掉表单的默认提交导致的。</p><h2 id="阻止表单默认提交"><a href="#阻止表单默认提交" class="headerlink" title="阻止表单默认提交"></a>阻止表单默认提交</h2><p>想要阻止表单的默认提交，有3种方法。</p><ol><li>使用return false</li></ol><p>将form标签改为<code>&lt;form action=&quot;/login&quot; method=&quot;post&quot; onSubmit=&quot;return login()&quot;&gt;</code>。</p><p>说到这种方法，就必须说一下，在js的事件中调用函数时加不加return的区别。引用网上的解释：</p><blockquote><p>js在事件中调用函数时用return来返回值实际上是对window.event.returnvalue进行设置。而该值决定了当前事件的默认行为是否执行。</p><p>当返回的是true时，将执行事件的默认行为。当返回是false时，将阻止事件的默认行为。</p><p>而不加return时。将不会对window.event.returnvalue进行设置，所以会默认执行事件。</p></blockquote><p>所以login函数判断输入域为空时return false，会阻止表单的默认提交。只有返回true时才会提交表单。</p><ol start="2"><li>event.preventDefault()</li></ol><p>form表单写为<code>&lt;form action=&quot;/login&quot; method=&quot;post&quot; onSubmit=&quot;login(event)&quot;&gt;</code>，为login函数增加一个event事件参数。login函数的代码如下：</p><figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">function</span> <span class="title">login</span>(<span class="params">e</span>) </span>&#123;</span><br><span class="line">    <span class="keyword">var</span> username = <span class="built_in">document</span>.getElementById(<span class="string">"username"</span>);</span><br><span class="line">    <span class="keyword">var</span> password = <span class="built_in">document</span>.getElementById(<span class="string">"password"</span>);</span><br><span class="line">            </span><br><span class="line">    <span class="keyword">if</span> (username.value === <span class="literal">null</span> || username.value === <span class="string">''</span>) &#123;</span><br><span class="line">        alert(<span class="string">"username cannot be empty"</span>);</span><br><span class="line">        e.preventDefault();   <span class="comment">//阻止表单默认提交的行为</span></span><br><span class="line">        <span class="keyword">return</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (password.value === <span class="literal">null</span> || password.value === <span class="string">''</span>) &#123;</span><br><span class="line">        alert(<span class="string">"password cannot be empty"</span>);</span><br><span class="line">        e.preventDefault();   <span class="comment">//阻止表单默认提交的行为</span></span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure><p>当检查输入域不满足条件时提示用户，并通过event.preventDefault()来阻止表单的默认提交。当满足条件时执行提交事件。</p><ol start="3"><li>type=”button”</li></ol><p>将提交表单按钮的type改为button，这时它变为一个“普通”的按钮，不会再触发表单的默认提交事件。我们可以删除form标签的action和method等属性，为提交按钮添加一个onclick事件处理函数，来完成判断输入域和提交表单数据等一系列操作。</p><h2 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h2><p>现在一般的表单提交写法就是直接使用“普通”的提交按钮，在该按钮的点击事件中处理登录逻辑。所以在使用button按钮时千万不要忘了<code>type=&quot;button&quot;</code>，否则就会因为没有阻止表单的默认提交行为而使自己的函数处理逻辑失效。</p>]]></content>
+      
+      
+      <categories>
+          
+          <category> 踩坑 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> 表单默认提交 </tag>
+            
+            <tag> js </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>NexT主题配置踩坑</title>
+      <link href="/2019/08/29/next-theme-settings/"/>
+      <url>/2019/08/29/next-theme-settings/</url>
+      
+        <content type="html"><![CDATA[<p>在配置next主题时，遇到了一些问题，解决的过程也很有意思，因此在本文做个记录。</p><p>官方网址：<a href="https://theme-next.org" target="_blank" rel="noopener">NexT主题官网</a>（英文），<a href="http://theme-next.iissnan.com/" target="_blank" rel="noopener">旧版官网</a>（中文）。<a id="more"></a></p><h2 id="Valine"><a href="#Valine" class="headerlink" title="Valine"></a>Valine</h2><p>Valine评论系统还是相当好用的，其使用LeanCloud云存储服务管理评论数据。在这里推荐使用<a href="https://leancloud.app/" target="_blank" rel="noopener">LeanCloud国际版</a>，可以免去实名认证和绑定备案域名的烦恼。在按照官网的教程配置好之后，发现渲染出来的评论框下面有个“powered by valine”的标志。本来使用了人家的东西为人家顺便做个广告也是理所当然，但是总觉得有这个标志太难看了，所以就开始想办法把这个标志去掉。</p><p>首先百度出来一个方法，在valine模板文件<code>next\layout\_third-party\comments\valine.swig</code>中添加如下代码：</p><figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">var</span> infoEle = <span class="built_in">document</span>.querySelector(<span class="string">'#comments .info'</span>);</span><br><span class="line"><span class="keyword">if</span> (infoEle &amp;&amp; infoEle.childNodes &amp;&amp; infoEle.childNodes.length &gt; <span class="number">0</span>) &#123;</span><br><span class="line">    infoEle.childNodes.forEach(<span class="function"><span class="keyword">function</span>(<span class="params">item</span>) </span>&#123;</span><br><span class="line">        item.parentNode.removeChild(item);</span><br><span class="line">    &#125;);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure><img src="/2019/08/29/next-theme-settings/1.png" class=""><p>这段js代码做的事情很简单：找到info类的元素，遍历删除其所有子元素。所以这个info类的元素很有可能就是包含“powered by valine”的元素。为了证实这个想法，先不添加上面这段代码，本地启动hexo，随便打开一篇文章，查看其DOM元素结构，发现果然是这样：</p><img src="/2019/08/29/next-theme-settings/2.png" class=""><p>id为comments的div包含的就是valine评论的部分，而info类的div包含的就是我想要去掉的部分。</p><p>于是我就把上面的代码添加到swig文件中，重新渲染生成，本地启动hexo。本以为一切ok的我发现“powered by valine”仍然在那，这就让我很纳闷了，于是我就到浏览器上调试一下，看看发生了什么。</p><p>找到添加的那段代码，打个断点，发现执行到if语句的时候，infoEle竟然为null。</p><img src="/2019/08/29/next-theme-settings/3.png" class=""><p>这时候再去看看DOM结构，发现现在id为comments的div内没有内容。</p><img src="/2019/08/29/next-theme-settings/4.png" class=""><p>原来在这个时候，valine评论组件还没有插入到DOM树当中去，所以在这个时候想通过js删除相应的div自然会失败。这个时候再回过头来观察一下valine.swig这个文件的截图，发现在添加的代码前面有一段<code>new Valine({...});</code>的代码，这显然是在初始化valine评论组件，但是valine并没有在初始化之后立即插入到DOM结构中。这个插入DOM树的时间的控制，我猜应该是valine的开发者故意为之，是让我们无法轻易的去掉“powered by”标志。至于为什么网上其他人可以通过添加上面这段代码去掉这个标志，我猜应该是valine版本更新的缘故。</p><p>明白了失败的原因就好解决了，只要使我们添加的这段代码在valine组件插入到DOM树之后执行就好了，这里我使用window.onload方法。window.onload是在页面资源（比如图片和媒体资源，它们的加载速度远慢于DOM的加载速度）加载完成之后才执行。将上面的代码改为这样：</p><figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">window</span>.onload = <span class="function"><span class="keyword">function</span> (<span class="params"></span>) </span>&#123;</span><br><span class="line"><span class="keyword">var</span> infoEle = <span class="built_in">document</span>.querySelector(<span class="string">'#comments .info'</span>);</span><br><span class="line"><span class="keyword">if</span> (infoEle &amp;&amp; infoEle.childNodes &amp;&amp; infoEle.childNodes.length &gt; <span class="number">0</span>) &#123;</span><br><span class="line">        infoEle.childNodes.forEach(<span class="function"><span class="keyword">function</span>(<span class="params">item</span>) </span>&#123;</span><br><span class="line">            item.parentNode.removeChild(item);</span><br><span class="line">        &#125;);</span><br><span class="line">&#125;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure><p>或者使用css将info类元素隐藏掉：</p><figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">window</span>.onload = <span class="function"><span class="keyword">function</span> (<span class="params"></span>) </span>&#123;</span><br><span class="line"><span class="keyword">var</span> info = <span class="built_in">document</span>.querySelector(<span class="string">'#comments .info'</span>);</span><br><span class="line"><span class="keyword">if</span> (info) &#123;</span><br><span class="line">info.style.display = <span class="string">"none"</span>;</span><br><span class="line">&#125;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure><p>重新渲染生成，本地启动hexo，发现大功告成。</p><p>当然，没有什么是不可以通过修改源码来解决的，直接修改valine的源码也可以去掉“powered by”的标志。这个也比较简单，找到输出“powered by”标志的相应代码删除，将js文件保存在next主题的<code>source/js</code>中，然后在valine.swig中引入就可以了。</p><h2 id="不蒜子"><a href="#不蒜子" class="headerlink" title="不蒜子"></a>不蒜子</h2><p>在使用<a href="http://busuanzi.ibruce.info/" target="_blank" rel="noopener">不蒜子</a>统计访问量的时候，配置好之后在本地启动，发现访问量初始数字很大，又没有找到修改初始化访问量的地方。最后发现部署到线上之后就是正常的了，在本地访问量确实是错误的，遇到这个问题不必惊慌。</p>]]></content>
+      
+      
+      <categories>
+          
+          <category> 踩坑 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> next </tag>
+            
+            <tag> valine </tag>
+            
+            <tag> hexo </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>部署项目至服务器时的时区问题</title>
+      <link href="/2019/07/20/server-timezone-error/"/>
+      <url>/2019/07/20/server-timezone-error/</url>
+      
+        <content type="html"><![CDATA[<p>前段时间在部署一个项目时，发现部署至服务器之后，系统查询时查出来的数据的时间晚了8个小时，很显然是时区问题，使用了GMT时区而不是CST时区。<a id="more"></a></p><p>由于在本地运行时是正常的，所以显然是服务器端时区出了问题。整个项目在服务器上使用nginx+docker部署，使用docker拉取jdk镜像并创建jdk容器运行打好的jar包。所以出现问题的地方可能有两处：</p><ul><li>服务器时区异常</li><li>jdk时区异常</li></ul><p>使用<code>date</code>命令查看服务器时间正常，所以答案就是jdk时区异常。但是由于是用docker创建的jdk容器，所以最简单解决问题的办法就是jar包运行时加上时区参数。</p><figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">java -Duser.timezone=GMT+<span class="number">08</span> -jar app.jar</span><br></pre></td></tr></table></figure><p>问题成功解决。</p><p>最后顺便总结一下常见的时区。</p><blockquote><ul><li>GMT(Greenwich Mean Time)，格林威治标准时。英国伦敦郊区的皇家格林尼治天文台的标准时间，也就是本初子午线（0度经线）的当地时间。</li><li>UTC(Universal Time Coordinated)，协调世界时，又称世界标准时间。比GMT更精准，一般可把两者视为相同。</li><li>CTT(China Taiwan Time)，中国台湾时间。CTT=GMT+08，和北京时间一致。</li><li>CST。CST可视为美国、澳大利亚、古巴或中国的标准时间。CST是如下4个不同的时区的缩写：</li></ul><p>美国中部时间：Central Standard Time (USA) UT-6:00</p><p>澳大利亚中部时间：Central Standard Time (Australia) UT+9:30</p><p>中国标准时间：China Standard Time UT+8:00</p><p>古巴标准时间：Cuba Standard Time UT-4:00</p></blockquote><p>所以为了表示中国标准时间，一般使用CTT或者GMT+08，使用CST可能会造成混淆。</p>]]></content>
+      
+      
+      <categories>
+          
+          <category> 踩坑 </category>
+          
+      </categories>
+      
+      
+        <tags>
+            
+            <tag> docker </tag>
+            
+            <tag> 服务器 </tag>
+            
+            <tag> 时区 </tag>
+            
+            <tag> jdk </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>开博感言</title>
+      <link href="/2019/07/18/hello/"/>
+      <url>/2019/07/18/hello/</url>
+      
+        <content type="html"><![CDATA[<p>终于开始了我的个人博客之旅（村通网系列^_^）。</p><img src="/2019/07/18/hello/hello.jpg" class=""><a id="more"></a><p>总体来说，使用hexo这种静态博客系列还是比较方便的，基于Node.js加上Github Pages很快就能搭建起自己的博客系统。虽然没有动态博客功能强大，但是自己平时写写东西还是足够了，而且免去了自己建站、维护的烦恼。想自己配置主题也是可以好好研究一下的，我目前用的就是非常流行的<a href="https://github.com/theme-next/hexo-theme-next" target="_blank" rel="noopener">Next</a>主题。暂时就挂在Github Pages上，后续再买个vps放到上面吧。</p><p>Go Go Go!</p>]]></content>
+      
+      
+      <categories>
+          
+          <category> 生活 </category>
+          
+      </categories>
+      
+      
+    </entry>
+    
+    
+  
+  
+</search>
